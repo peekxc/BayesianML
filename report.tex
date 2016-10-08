@@ -1,0 +1,125 @@
+\documentclass[10pt]{article}
+\usepackage{graphicx}
+\usepackage{exercise}
+\usepackage{enumerate}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{array}
+\newcolumntype{P}[1]{>{\centering\arraybackslash}p{#1}}
+\author{Matt Piekenbrock, Jace Robinson}
+
+\begin{document}
+
+
+\vspace{0.1in}
+\title{Bayesian Variations to Popular Machine Learning Algorithms}
+
+College Scorecard: 
+https://www.kaggle.com/kaggle/college-scorecard
+
+\section{Goals} 
+%  What problem/challenge motivates this work 
+    It is well known that US university students often graduate with copious amounts of financial debt. Despite the U.S. Department of Educations Mission Statement of "...promote[ing] student achievement and preparation for global competitiveness by fostering educational excellence and ensuring equal access.", college tuition rates are often far above an affordable threshold of being considered practical. Even worse, students who do graduate find themselves facing repayment obligations that far outweigh their potential income earnings. These notions collectively spark a number of questions, centered around the same idea: Is college worth it, and if so, which universities are more likely to produce higher-earning graduates, given their cost? 
+
+%     General Notions about the top 
+    The average person in the U.S. may perhaps agree that students who graduate from the `elite" colleges (i.e. Stanford, MIT, Carnegie Mellon, UC Berkeley, etc.) tend to earn more than graduates from more middle-ground universities, however, the in-depth relationships between future income and choice of university are not at all well known, nor are they intrinsically deterministic. 
+
+% What value it brings     
+    Knowing more about the finer details regarding the distributions of certain university statistics provides an opportunity never before truly possible than before the dawn of large, openly accessible, public-domain datasets. Using the College Scorecard dataset collected by the United States Department of Education, a detailed `bang-for-buck" analysis opportunity has manifested like never before; using this data, cost-analysis techniques can be used to generate confidence about the relative success--or failure--graduates from particular universities of interest are facing. 
+    
+\begin{center}
+\begin{tabular}{| P{7cm} | P{2cm} | P{1.5cm} |}
+ \hline Task & Completion Date & Assigned Member \\ 
+ \hline Implement Bayesian Linear Regression on sample dataset & 10-18-16 & Matt \\  
+ \hline Implement Bayesian Logistic Regression on sample dataset & 10-18-16 & Jace \\
+ \hline Analyze College Scorecard dataset with Linear Regression & 11-1-16 & Matt \\
+ \hline Analyze College Scorecard dataset with Logistic Regression & 11-1-16 & Jace \\
+ \hline Analyze College Scorecard dataset with Bayesian Linear Regression & 11-8-16 & Matt \\
+ \hline Analyze College Scorecard dataset with Bayesian Logistic Regression & 11-8-16 & Jace \\
+ \hline Create nearly completed linear regression analysis report & 11-15-16 & Matt \\
+ \hline Create nearly completed logistic regression analysis report & 11-15-16 & Jace \\
+ \hline Merge analysis into single report & 11-25-16 & Both \\
+ \hline
+\end{tabular}
+\end{center}
+
+
+    
+\section{Objective}
+% What specifics, demonstrable or measurable outcomes/capabilities/techniques... provide architecture schematic; identify how you obtained innovation/novelty
+The field of Machine Learning is vast; the book "Machine Learning: A Probabilistic Perspective" covers 28 major categories of the machine learning field, discretized into distinct chapters, each of which presents numerous models, methods, and statistical estimation techniques that can all potentially be utilized  $\textit{in some way}$ to address the above goals. Although some techniques may offer advantages for specific goals (mentioned below) compared to others, the correct algorithms or `tools" to do a generalizable cost-analysis of aforementioned scorecard data are relatively unknown. Despite this, and following the curriculum of the class, we've chosen to include Bayesian equivalents to several of the machine learning models presented throughout the semester, including: 
+\begin{enumerate}
+	\item Bayesian Linear Regression 
+    \item Bayesian Logistic Regression
+    \item ... 
+\end{enumerate}
+
+The reasons for a Bayesian approach are manyfold; primarily, we believe inference with machine-learned models should have a systematic framework for incorporating knowledge known about the system being modeled $a priori$, and that the probabilities estimated by the models covered in this report should ideally represent the degree of belief we have about our summary statistics, given the data in hand. 
+
+From a practical point of view, Bayesian statistics have been on the rise in popularity ~\cite{ashby2006bayesian}
+    
+\section{Evaluation}
+% how did you test/evaluate? provide snapshots if appropriate to demonstrate how objectives were met.
+
+\section{Conclusion}
+    
+\section{References}
+
+
+ \begin{enumerate}
+    \item What are the universities that provide the maximum value (to be defined) to its students. 
+    \item Examine various trends about Wright State, Ohio State, and University of Dayton over time. What are the projected employment rates, post graduate income levels, and debt levels in the next 10 years.
+    \item Predict post graduate income levels by university or debt levels based features such as family income, graduation rates, ethnicity proportions,  year, location, and tuition costs (regression problem). What set of features provide the best prediction accuracy?
+    \item Predict tuition cost based on the same input features as question three (regression problem).
+    \item Examine Carnegie classification. What features are most useful in determining a classification?
+    \item Carnegie classification for size and setting. Are there relationships between debt, income level, tuition costs, etc...
+    \item Examine public versus private institutions. Can metrics such as post graduate income level or debt levels be used to correctly identify the type of institution?
+\end{enumerate}
+    possible regression output variables (y values): ACT Scores, price of institution, completion rate, faculty salary, percentage with grant or loan, debt repayment rate after X years, median debt level, cumulative debt, employment rate after X years, post grad income rate after X years
+    Note we can examine variables across TIME, or across UNIVERSITY.
+
+
+
+
+
+Learning 
+
+Goals can be broader than what you will achieve in this project.
+
+
+2. Objective: 
+% Specific, demonstrable or measurable outcomes/capabilities/techniques/...identify if there is any innovation/novelty
+
+\section{Approach} Discuss steps take, technology/method chosen, data obtained/used, testing done; provide architecture schematic; identify how you obtained innovation/novelty
+
+Evaluation and/or Demo and/or Outcome: how did you test/evaluate? provide snapshots if appropriate to demonstrate how objectives were met.
+
+Conclusion
+
+\section{References}
+
+
+Appendix: Schedule and Milestones
+
+
+% This is a high-level overview of the goals and plan for the day. This is only a paragraph in length, but establishes expectations for whether people should work in groups, how far they should expect to get, and (if possible) how this class session ties into other building blocks and projects.
+\section{Overview and Orientation}
+
+
+
+\section{Some Content}
+% \begin{marginfigure}
+% Extra Resources:
+% \begin{itemize}
+% \item here are some links to resources
+% \item there might be videos by the teaching team
+% \item or by Khan Academy or something
+% \item there could also be some cool written resources
+% \item and extra problems for if you get stuck or if you want to go into more depth
+% \end{itemize}
+% \end{marginfigure}
+
+Here there is some written explanation of content and problems to work on. To the extent possible, include
+
+\bibliographystyle{alpha}
+\bibliography{report}
+\end{document}
