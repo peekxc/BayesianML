@@ -1,0 +1,712 @@
+---
+title: "Bayesian Linear Regression"
+output: html_notebook
+---
+
+In a simple linear regression (SLR) model, the target random variable $Y$ given the regressor random variable(s) $X$ might be implemented as follows: 
+
+$$ Y = \beta_0 + \beta_1 x + \epsilon $$
+
+where $\beta_0 + \beta_1$ are the parameters of model, corresponding to the intercept and slope, respectively, and where $\epsilon$ is a __random variable__ that is *assumed* to be distributed with $E(\epsilon) = 0$ and $Var(\epsilon) = \sigma^2$ [cite]. In the SLR model, the error distance is described by $\epsilon$, which I may also call *residuals*, are assumed to be independent and identically normally distributed around the regression line with some variance parameter $\sigma^2$, a.k.a
+
+$$ \epsilon_i \thicksim N(0, \sigma^2) $$
+
+It's well known that linear regression is often generalized to allow for multiple variables, additional complexity, etc., allowing the simple expression above to be rewritten using vector notation: 
+
+$$ y_i = x_{i}^T \beta + \epsilon_i $$
+
+Under this model, the error term $\epsilon$ is assumed to be described sufficiently by the variance of the model $\sigma^2$, which is known as the *homogeneous variance assumption* (also called the assumption _homoskedascity_). Yet despite the often understated assumption, many data that exists fails to meet this criterion. __It is natural to think that changes in the value of the predictors used in the model may also result in changes in the variance of the response variable(s) at those values__. 
+
+For the rest of this section, I will introduce the analytical notation regarding Bayesian Linear Regression using conjugate priors, tying each term into its english interpretation with the college scorecard data set, starting with just mean earnings as a function of tuition cost. 
+
+Specifically, in the college scorecard data set, I am interested in modeling the average earnings of students per university 10 years after enrolling as a function of the tuition cost of the school. These variables are described by the MN\_EARN\_WNE\_P10 and TUITIONFEE\_IN, respectively. Below is an example of the what these variables look like in the data: 
+```{r}
+  csc_2012 <- data.table::data.table(
+  read.csv(file = "~/BayesianML/projectDataPartitions/trainingData2012-13.csv"))
+  plot(csc_2012[, .(TUITIONFEE_IN, MN_EARN_WNE_P10)], )
+```
+In simple linear regression (SLR), $x_{i}^T$ represents the tuition cost, $\beta$ the slope+intercept parameters of the model, and $\epsilon_i$ represents the residual between the model and the data, whose variation is described by:
+$$\epsilon_i \thicksim N(0, \sigma^2) $$
+
+Where $\sigma^2$ can be estimated by simply looking at the variance of the residuals. Because the structure of the data is assumed to be normal with fixed variance $sigma^2$, I plotted the first 3 standard deviations of the SLR model on the data. 
+
+```{r}
+  ## Simple Linear Regression 
+  model <- lm(MN_EARN_WNE_P10 ~ TUITIONFEE_IN, csc_2012)
+  plot(csc_2012[, .(TUITIONFEE_IN, MN_EARN_WNE_P10)], pch=20, main="Earnings vs. Tuition", 
+       xlab="Tuition Cost", ylab="Mean Earnings (post 10 years)")
+  abline(model$coefficients[1], model$coefficients[2], col="red")
+  model_sd <- summary(model)$sigma
+  col_sd <- c("blue", "cadetblue", "turquoise3")
+  for (sd_i in 1:3){
+    abline(model$coefficients[1]+sd_i*model_sd, model$coefficients[2], col=col_sd[sd_i], lty=2)
+    abline(model$coefficients[1]-sd_i*model_sd, model$coefficients[2], col=col_sd[sd_i], lty=2)
+  }
+```
+There are a number of assumptions made when building the linear regression model (linearity between mean response variables and regressors, constant variance, insignificant amount of multicollinearity, etc., assumptions of normality in residual, etc.). My goal is to use Bayesian linear regression to  address at least a few of these. 
+
+### Linearity 
+Looking at just the p-value (for now) for the basic linear regression model of tuition vs. mean earnings, I get some summary results that look like this: 
+```{r}
+  summary(model)
+```
+There are a few statistics reported here, but in terms of assessing the linearity assumption, tuition was found to indeed be a very significant factor in the earnings of the a student 10 years after enrolling. For now, I conclude that the assumption of some kind of linear relationship between tuition and earnings is valid, and move on to the next assumption. 
+
+### Normality of residuals 
+The residual errors of the linear regression model are assumed to be distributed as $\mathcal{N}(0, \sigma^2)$ where $\sigma^2$ is some fixed variance. To assess whether the errors seem to be noramlly distributed, I use a QQ plot. 
+```{r}
+qqPlot(model, main="QQ Plot")
+```
+Ideally, the (studentized) residuals should fall as close to the center (solid) line as possible. They appear to not deviate so far as to conclude that assumptions of normality are invalid, however the F-score, a related measure for testing the equality of variances between the regressors and the response, is very high (1 would indicate equality in variance). On top of that, the $R-squared$ value, which [cite] cites as "the proportion of the variation explained by the model", is particularly poor, indicating that although there may be a significant effect of tuition on the mean earnings of a individual 10 years after enrolling, that effect seems particularly small. Nonetheless, judging the assumption of normality of residuals striclty qualitatively, I conclude that assuming normality is a decent assumption to make. 
+
+### Constance Variance (Homoscedasticity)
+I posit that the low $R^2$ value is primarily being affected by both outliers towards the upper-end of the tuition quantiles and the lower end as well. Specialized schools like low-cost Nursing and Pharmacy schools are producing high-earning students at impressively low tuition rates, and the (better) Ivy League schools are produced students that make almost exponentially more money on average than the average college graduate. Because of this, it would appear that the assumption of constant variance between observations is most likely wrong. To test this, I used the Bruech Pagan hypothesis test for Homoscedasticity (null hypothesis), as recommended by Cook \cite{cook1983diagnostics}. 
+```{r}
+  library("car")
+  car::ncvTest(model)
+```
+Immediate results show that tests for homoscedasticity fail dramatically; it seems it is perhaps an incorrect assumption to assume that the variation of earnings as the tuition changes is constant. However, as noted in \cite{breusch1979simple}, this test only indicates whether the variance in the residual is constant; it {\it is possible that} there is a linear relationship between the variances of the residual and the independent variable(s). 
+
+Thus, I implemented a Bayesian Linear Regression (BLR) model on the data as a means of more accurately describing the reality of the relationship between tuition and mean earnings. To start, Bayesian statistics relies on the notion of a _prior_ and a _likelihood_ function in combination to produce a (hopefully) more accurate "predictive posterior density", which I interpret simply as a probability distribution that factors in reasonable _bias_ information in the form of prior distribution as a means of more accurately describing the underlying structure in which the data was formed. 
+
+To do this, however, requires the aforementioned density functions, described by Bayes Theorem as follows: 
+
+$$ P(A \mid B) = \frac{P(B \mid A) \times P(A)}{ P(B) } $$
+
+Where $P(A \mid B)$ represents the posterior, $P(B \mid A)$ represents the likelihood, $P(A)$ represents the prior, and $P(B)$ represent the marginal distribution of $B$. 
+
+In the case of linear regression, I would like to use prior information to change the variance of the SLR model so that it's a random variable that is __not constant__. That is, I want the $sigma$ term in the formulation of the residual $\epsilon_i$: 
+
+$$ \epsilon_i \thicksim N(0, \sigma^2) $$
+ 
+Formulating this in the Bayesian way requires a likelihood function for the SLR model. Following \cite{murphy2012machine}, this is simply the probability of the dependent data ($y$) conditional on the regressors $X$ (tuition), {\it and the parameters of the model $\beta$ and $\sigma^2$}. 
+
+$$ P(y \mid X, \beta, \sigma^2) \propto (\sigma^2)^{n/2} exp(-\frac{1}{2\sigma^2}(y - X \beta)^T (y - X \beta))$$
+
+```{r, show=FALSE}
+  base_model <- lm(MN_EARN_WNE_P10 ~ TUITIONFEE_IN, data = csc_train_unscaled)
+  sigma_sq <- summary(base_model)$sigma^2
+  n <- length(base_model$residuals)
+  y <- base_model$fitted.values
+  X <- matrix(c(rep(1, nrow(csc_train_unscaled)), csc_train_unscaled$TUITIONFEE_IN), ncol = 2)
+  beta <- base_model$coefficients
+  likelihood <- sigma_sq^(n/2)*exp(-(1/2*sigma_sq^2) * t(y - X %*% beta) %*% (y - X %*% beta))
+```
+With the likelihood defined, I proceeded with defining my prior distributions on $\beta$ and $\sigma^2$. 
+
+## With conjugate priors 
+The posterior distribution of interest is defined as 
+$$P(\beta, \sigma^2 \mid y, X) $$
+which, through Bayes Rule, is proportional to:  
+$$P(y \mid X, \beta, \sigma^2) P(\beta \mid \sigma^2) P(\sigma^2)$$
+
+The inverse gamma distibution is defined as: 
+$$f(x; \alpha, \beta) = \frac{\beta^{\alpha}}{\Gamma{(\alpha)}}x^{-\alpha - 1} exp(-\frac{\beta}{x})$$
+Where $\Gamma$ corresponds to the gamma function $\Gamma{(n)} = (n-1)!$
+
+The prior on the variance parameter describing the spread of student earnings as a response of the university they went to can be redescribed as a random variable. To get an analytical solution, a conjugate prior has ot be used. Thus, I describe the prior on $sigma$ as follows: 
+  
+$$ P(\sigma) \propto \text{Inv-Gamma}(a_0, b_0)$$
+and the conditional prior density $P(\beta \mid \sigma^2)$ is described as follows:
+
+$$ P(\beta \mid \sigma^2) \propto (\sigma^2)^{-\frac{k}{2}} exp(-\frac{1}{2 \sigma^2}(\beta - \mu_0)^T \Lambda_0 (\beta - \mu_0))$$
+
+So the entire course of BLR can be described by 4 update questions for Bayesian inference: 
+
+$$ \Lambda_n = (X^{T} X + \Lambda_0) $$
+$$ \mu_n =  (X^T X + \Lambda_0)^{-1} (\Lambda_0 \mu_0 + X^T y) $$
+$$ a_n = a_0 + \frac{n}{2} $$
+$$ b_n = b_0 + \frac{1}{2}(y^T y + \mu_0^T \Lambda_0 \mu_0 - \mu_n^T \Lambda_n \mu_n ) $$
+
+where $\Lambda_0$ represents the ``prior precision matrix'', which mesasures the strength of the prior. The posterior (with a conjugate prior) is found analytically by using each of the respective parameters to compute the posterior, i.e. 
+
+$$ P(\beta, \sigma^2 \mid y, X) \propto P(\beta \mid \sigma^2 , y, X) P(\sigma^2 \mid y, X) $$
+Which is equal to: 
+$$\text{Posterior} = \mathcal{N}(\mu_n, \sigma^2 \Lambda_n^{-1}) \times \text{Inv-Gamma}(a_n, b_n)$$
+
+So with the posterior derived and translations given to each variable, I proceeded by following Murphies suggested initializations of the parameter settings and set them all to their equivalent values of what would consitute an ``uninformative prior''.
+
+```{r, show=FALSE}
+  ## Set prior precision matrix as just the scaled covariance matrix 
+  ## (Unit information prior)
+  lambda_0 <- (1/n) * (t(X) %*% X) # 1/solve(t(X) %*% X)# t(X) %*% X
+  
+  ## Initial parameter estimates could be anything, so set to 0 for each parameter
+  mu_0 <- c(0, 0)
+
+  ## Murphy recommends initial a and b values = 0 
+  a_0 <- 0
+  b_0 <- 0
+```
+
+These hyperparameters control how the prior will impact the posterior when multiplied by the likelihood. With these defined, the other parameters are derived:
+
+```{r}
+  ## Lambda_n reflects assumed precision of the prior 
+  lambda_n <- lambda_0 + t(X) %*% X
+
+  ## Mu_n represent the initial guesses of the beta parameters (intercept and effects)
+  #mu_n <- solve(t(X) %*% X + lambda_0) %*% (lambda_0 %*% mu_0 + t(X) %*% y)
+  mu_n <- solve(lambda_n) %*% (lambda_0 %*% mu_0 + t(X) %*% y)   
+
+  ## Alternative using Murphies variation with sigma^2 is unknown
+  # v_n <- solve(t(X) %*% X)
+  # mu_n <- v_n %*% t(X) %*% y
+  
+  ## Alternative using unknown variance 
+  # lambda_n <- solve(v_n)
+  
+  ## a_n updates the count 
+  a_n <- a_0 + n/2 # rep(a_0 + n/2, length(beta))
+  
+  ## b_n is:
+  b_n <- b_0 + # the prior sum of squares
+    (1/2)*(t(y) %*% y # the empirical sum of squares of the response
+           + t(mu_0) %*% lambda_0 %*% mu_0 - t(mu_n) %*% lambda_n %*% mu_n) # error on the prior
+  
+  ## Alternative using unknown variance formulation 
+  # v_0_i <- (1/n) * (t(X) %*% X) # Unit information prior (same as identity)
+  # b_n <- b_0 + (1/2) * (t(mu_0) %*% v_0_i %*% mu_0 + t(y) %*% y - t(mu_n) %*% solve(v_n) %*% mu_n)
+  # 
+  #rep(b_0 + (1/2)*(t(y) %*% y + t(mu_0) %*% lambda_0 %*% mu_0 - t(mu_n) %*% lambda_n %*% mu_n), length(beta))
+```
+
+The posterior can now be defined by using these parameter values as location and scale parameters to the product of the likelihood (Normal) and prior (Inverse Gamma) distributions. This result can be used to derive (not shown) the marginal posteriors for each term, which are given by:
+
+$$ P(\sigma^2 \mid \text{data}) = \text{Inv-Gamma}(a_n, b_n) $$
+$$ P(\beta \mid \text{data}) = \mathcal{T}(\beta, \frac{b_n}{a_n}\Lambda_n^{-1}, 2 a_n) $$
+
+The parameterization of $\mathcal{T}$ follows an alternative definition of the $t$-distribution (as opposed to just degrees of freedom) which can be found on wikipedia under the "In terms of inverse scaling parameter $\lambda$" section (credit to Jace for finding this). The parametrization is as follows: 
+
+$$P(x \mid \nu, \mu, \lambda) = \frac{\Gamma(\frac{\nu + 1}{2})}{\Gamma(\frac{\nu}{2}} (\frac{\lambda}{\pi \nu})^\frac{1}{2} (1 + \frac{\lambda(x - \mu)^2}{\nu})^{-\frac{\nu + 1}{2}}$$
+
+## Bayesian Inference
+With all of the formula's defined, the marginal posteriors can be computed from the data, and parameter estimates of $\beta$ and $\sigma^2$ can finally be achieved through the Bayesian formulation of the problem. 
+
+I then computed the posterior marginals for intercept and effects terms $\beta$, shown below: 
+
+```{r}
+  ## Intercept term 
+  beta_start <- metRology::qt.scaled(0.01, mean = mu_n[1,], sd = 0, df = a_n*2)
+  beta_end <- metRology::qt.scaled(0.99, mean = mu_n[1,], sd = 0, df = a_n*2)
+  beta_0 <- function(x) { metRology::dt.scaled(x, df = a_n*2, mean = mu_n[1,], sd = 0) }
+  curve(beta_0, from = beta_start, to = beta_end)
+```
+And for tuition: 
+```{r}
+  ## Tuition term 
+  beta_start <- metRology::qt.scaled(0.01, mean = mu_n[2,], sd = sqrt(1/lambda), df = a_n*2)
+  beta_end <- metRology::qt.scaled(0.99, mean = mu_n[2,], sd = sqrt(1/lambda), df = a_n*2)
+  beta_0 <- function(x) { metRology::dt.scaled(x, df = a_n*2, mean = mu_n[2,], sd = sqrt(1/lambda)) }
+  curve(beta_0, from = beta_start, to = beta_end, 
+        main = "Marginal Posterior for Tuition")
+```
+I estimated the posterior marginal of $\sigma^2$ as follows (for the center 99.98\% of the distribution): 
+
+```{r}
+  par(mar=c(4.5, 1.5, 1.5, 1.5))
+  ## Start and stop quantiles
+  y_min <- invgamma::qinvgamma(p = 0.0001, shape = a_n, scale = b_n)
+  y_max <- invgamma::qinvgamma(p = 0.9999, shape = a_n, scale = b_n)
+  
+  # Marginal density of sigma^2
+  sigma_sq_func <- function(x) {
+    invgamma::dinvgamma(x = x, shape = a_n, scale = b_n)
+  }
+  
+  curve(sigma_sq_func, y_min, y_max, main="P(sigma^2 | data)", xlab="Marginal posterior of residual variance")
+```
+As shwon above, using uninformative constants in the calculation of the inverse-gammas hyperparameters results in a prior that reflects very little assumed prior information regarding the value of $\sigma^2$. This is also called _Zellner's g-prior_ (Murphy). 
+
+I checked against a reference implementation that uses MCMC to approximate the marginal densities of the parameters. 
+```{r}
+  bayesian_model <- MCMCpack::MCMCregress(MN_EARN_WNE_P10~TUITIONFEE_IN, data = csc_train_unscaled, 
+                                 beta.start = mu_n, # beta-hat (use OLS estimate)  
+                                 b0 = mu_0, # prior mean of beta (vector or scalar) (mu_0?)
+                                 B0 = lambda_0, # prior precision matrix of beta 
+                                 c0 = a_n[1]*2, # a_0 (shape parameter of Inv-Gamma)
+                                 d0 = b_n[1]*2 # b_0 (scale parameter of Inv-Gamma)
+                                 )
+bayesian_model <-  MCMCpack::MCMCregress(MN_EARN_WNE_P10~TUITIONFEE_IN, data = csc_train_unscaled)
+  # bayesian_model2 <- MCMCpack::MCMCregress(MN_EARN_WNE_P10~TUITIONFEE_IN, data = csc_2012, 
+  #                                beta.start = mu_n, # beta-hat (use OLS estimate)  
+  #                                b0 = mu_0, # prior mean of beta (vector or scalar) (mu_0?)
+  #                                B0 = lambda_0*10000, # prior precision matrix of beta 
+  #                                c0 = a_n[1]*2, # a_0 (shape parameter of Inv-Gamma)
+  #                                d0 = b_n[1]*2 # b_0 (scale parameter of Inv-Gamma)
+  #                                )
+  # all.equal(bayesian_model, bayesian_model2)
+  par(mar=c(2.5, 1.5, 1.5, 1.5))  
+  plot(bayesian_model)
+```
+
+## Computing the posterior predictive
+
+The posterior predictive density of the _testing_ set is given by: 
+
+$$ P(\hat{y} \mid \hat{X}, \text{data}) = \mathcal{T}(\hat{y} \mid \hat{X} \beta, \frac{b_n}{a_n} (I_m + \hat{X} \Lambda_n^{-1} \hat{X}^T ), 2 a_n) $$
+
+I first looked at the testing data, which Jace randomly sampled from the overall data set. 
+```{r}
+    csc_2012_test <- data.table::data.table(
+    read.csv(file = "~/BayesianML/projectDataPartitions/testingData2012-13.csv"))
+    plot(csc_2012_test[, .(TUITIONFEE_IN, MN_EARN_WNE_P10)])
+```
+ 
+```{r}
+  plot(csc_train_unscaled[, .(TUITIONFEE_IN, MN_EARN_WNE_P10)], main="BLR(red) vs SLR(blue)", 
+       xlab="Tuition", ylab="Mean Earnings", pch=20, cex=0.5)
+  
+  # Bayesian Linear Regression 
+  MAP <- apply(bayesian_model, MARGIN = 2, max)
+  abline(a = MAP[1], b=MAP[2], col="red", lwd=2)
+  model_sd <- sqrt(MAP[3])
+  abline(MAP[1]+model_sd, MAP[2], col="red", lty=2, lwd=2)
+  abline(MAP[1]-model_sd, MAP[2], col="red", lty=2, lwd=2)
+  
+  
+  # Regular Simple Linear Regression 
+  abline(base_model$coefficients[1], base_model$coefficients[2], col="blue", lwd=2)
+  model_sd <- summary(base_model)$sigma
+  abline(base_model$coefficients[1]+model_sd, base_model$coefficients[2], col="blue", lty=2, lwd=2)
+  abline(base_model$coefficients[1]-model_sd, base_model$coefficients[2], col="blue", lty=2, lwd=2)
+  
+  
+  # points(x=X_hat[, 2], y = y_hat, col="red")
+```
+
+It's apparent that the data points seem to follow a similar distribution to that of the training set.
+
+```{r}
+  hist(csc_2012_test$TUITIONFEE_IN)
+  hist(csc_2012$TUITIONFEE_IN)
+```
+
+
+
+```{r}
+  ## Get design matrix of the test data 
+  X_hat <- as.matrix(cbind(rep(1, nrow(csc_2012_test)), csc_2012_test[, .(TUITIONFEE_IN)]))
+  
+  ## Posterior MAP Parameters (approx)
+  beta <- c(max(bayesian_model[, 1]), max(bayesian_model[, 2]))
+  sigma_hat <- max(bayesian_model[, 3])
+  
+  ## Calculate the sigmas for each point 
+  y_hat <- X_hat %*% matrix(beta)
+  #sigma_t <- as.vector(b_n / a_n) * (diag(nrow(X_hat)) + X_hat %*% v_n %*% t(X_hat))
+  sigma_t <- as.vector(b_n / a_n) * (diag(nrow(X_hat)) + X_hat %*% solve(lambda_n) %*% t(X_hat))
+  dof <- a_n*2
+  sigma_pp <- diag((dof/(dof-2)) * sigma_t)
+  
+  # From Murphy 2007 bayesGuass.pdf 
+  #t_sigma <- (b_n2 %*% (1 + v_n)) / a_n2
+  #m_n <- mu_n
+  
+  # Plot new variances
+  plot(csc_2012_test[, .(TUITIONFEE_IN, MN_EARN_WNE_P10)])
+  abline(a = beta[1], b=beta[2], col="red")
+  arrows(X_hat[, 2], y_hat-sqrt(sigma_pp), X_hat[, 2], y_hat+sqrt(sigma_pp), length=0.05, angle=90, code=3)
+```
+
+The confidence values were reported as follows: 
+```{r}
+  
+  stats::confint(base_model)
+  summary(bayesian_model)[[2]][, c(1, 5)]
+```
+
+## Posterior with Known Variance 
+
+The above set of derived equations are used to do Bayesian inference in the context where the variance of the observations were assumed to be unknown. This was shown through the use of an uninformative prior, where the precision matrix $\Lambda_0$ was set to $\frac{1}{N} X^{T} X$, corresponding to the unit information prior\cite{kass1995reference}. These results were then shown to corespond almost identically to the ``frequentist'' or classical method of linear regression, with minor differences in the computed confidence and credible intervals. 
+
+But this isn't entirely useful. The assumptions made by the Bayesian model with the uninformative prior are the same as the classical linear regression model (homoskedasticity, for example). Perhaps a more interesting model would be one that uses {\it informative} prior. As shown in section 7.6.1 in the Machine Learning book, this equates to adjusting (primarily) the update equations on the prior variance of the residuals and the initial guess on the $\beta$ parameters {\it using information about the variance of the training data set to guess on the variance of the residuals, and then using the testing data set ``online'' to dynamically give error bounds on the assumed normal distributions centered at the regression line. Specifically, by adjusting $\beta$ and $\Lambda_n$ with the following equations (training set): 
+
+$$ \beta = \Lambda_n^{-1} \Lambda_0 \beta_0 + \frac{1}{\sigma^2} \Lambda_n^{-1} X^{T} y $$
+$$ \Lambda_n^{-1} = \sigma^2 (\sigma^2 \Lambda_0 + X^{T} X)^{-1}$$
+
+Recalling that $\Lambda_n^{-1}$ is simply the prior variance of the residuals and $\Lambda_0$ is the precision matrix of the prior (strength of the prior), these equations allow prior assumptions of regressors impact on the response variables to be factored in a Bayesian way. {\it This allows me to address the incorrect assumptions of heteroskedasciticy} through the hyperparameters $\Lambda_0$ and the initial guesses of the effects of the regressors on mean earnings, $\beta_0$. 
+
+Starting with $\beta_0$, I think that it's reasonable to assume that tuition, for example, has a positive correlation with mean earnings, such that for every 10\% increase in the tuition, there's on average a 5\% increase in mean earnings after 10 years. I think this is reasonable because there seems to be an impression that better schools cost more money, and many people seem to prefer better schools not just because of the curricula but because of the social connections that the individuals are such schools may have with more influential figures in industry, academia, etc. I also think that, minimally, nearly everyone should be able to make about \$30,000 10 years out of college, regardless of the degree (intercept prediction).
+
+I believe my assumptions to be fairly accurate, so I decided to increase the impact the prior has on the posterior [marginals] by scaling $\Lambda_0$ appropriately. The {\it uninformative} way of creating a precision matrix would be to take the inverse of the unit information prior used previously, which is just the scaled-sum-of-squares matrix $\frac{1}{N} X^{T}X$. Instead, I elected to set the prior parameter $\Lambda_0$ as the inverse of the identity matrix scaled to my the subjective confidence I have in my prior assumptions, $\tau$: 
+
+$$ \Lambda_0 = (\tau^2 I)^{-1} $$
+
+Murphy notes that $\tau$ in this case acts in a similar way as $\lambda$ is used in regularization as a means of preventing overfitting, where, in certain conditions, the Bayesian estimation of the posterior mean actaully reduces to regularized ``ridge regression'' with $\lambda = \frac{\sigma^2}{\tau^2}$. I thus interpreted $tau$ to be a scaling parameter that allows the variance of the normals along the regression line to be smoothed out to either over-or-underfit, based on the setting of $\tau$. I think that reported earning collected via the tax system can be a bit misleading, Murphy doesn't recommend any particular techniques, so I chose to scale my precision matrix based on the (scaled) difference in variance between the testing and training data sets regarding tuition, just because that seemed to make intuitive sense to me. 
+
+The results (the first standard deviation of the estimated posterior residual distributions 
+$\mathcal{N}(0, \sigma_N^2)$, are shown per every 10 estimates)
+```{r, show=FALSE, fig.show=TRUE}
+  csc_train_unscaled <- data.table::data.table(
+    read.csv(file = "~/BayesianML/dataUnscaled/trainingData2012-13Unscaled.csv"))
+  csc_test_unscaled <- data.table::data.table(
+    read.csv(file = "~/BayesianML/dataUnscaled/testingData2012-13Unscaled.csv"))
+  # plot(csc_2012_test[, .(TUITIONFEE_IN, MN_EARN_WNE_P10)])
+
+  lm_unscaled <- lm(MN_EARN_WNE_P10~TUITIONFEE_IN, csc_train_unscaled)
+  n <- length(lm_unscaled$residuals)
+  y <- lm_unscaled$fitted.values
+  X <- matrix(c(rep(1, nrow(csc_train_unscaled)), csc_train_unscaled$TUITIONFEE_IN), ncol = 2)
+  
+  ## Start with precision matrix prior
+  tau <- 2500
+  V_0_i <- solve(tau^2 * diag(2))# (1/nrow(X) * (t(X) %*% X)) * 100 #1/nrow(X) * (t(X) %*% X) 
+  w_0 <- c(3.0e+04, 0.5)#rep(0, ncol(X))
+  
+  ## Estimate variance of prior parameters using eq. given in 7.58
+  sigma_sq <- var(csc_train_unscaled$TUITIONFEE_IN)
+  V_n <- (sigma_sq)*tau * solve(sigma_sq * V_0_i + t(X) %*% X)
+  #V_n <- solve(V_0_i + (1 / sigma_sq) * (t(X) %*% X)) 
+  sigma_w <- # matrix(c(0.5, -0.75, 0.25, 0.04777238), ncol=2)
+  y <- X %*% lm_unscaled$coefficients
+  w_n <- (V_n %*% V_0_i %*% w_0) + (1/(sigma_sq*tau)) * (V_n %*% t(X) %*% y)
+  
+  ## Get new observations
+  X_hat <- as.matrix(cbind(rep(1, nrow(csc_train_unscaled)), csc_train_unscaled[, .(TUITIONFEE_IN)]))
+  sigma_n <- sigma_sq + X_hat %*% V_n %*% t(X_hat) # var(X[,2]) + X_hat %*% V_n %*% t(X_hat)
+  var_estimates <- sqrt(diag(sigma_n)) # diag(sigma_n)
+  
+  # Regression 
+  plot(csc_test_unscaled[, .(TUITIONFEE_IN, MN_EARN_WNE_P10)], xlab="Tuition", ylab="Mean Earnings", 
+       main="Bayesian Linear Regression", pch=20)
+  abline(a = lm_unscaled$coefficients[1], b=lm_unscaled$coefficients[2], col="red")
+  #abline(a = w_n[1,], b = w_n[2,], col="blue")
+  y_hat <- X_hat %*% lm_unscaled$coefficients
+  bars_to_plot <- which(1:nrow(X_hat) %% 15 == 0)
+  arrows(X_hat[bars_to_plot, 2], # Observations of X
+         y_hat[bars_to_plot] - var_estimates[bars_to_plot],
+         X_hat[bars_to_plot, 2],
+         y_hat[bars_to_plot] + var_estimates[bars_to_plot], length=0.05, angle=90, code=3,
+         col="blue")
+```
+The figure above depicts the result of the (regularized) Bayesian Linear regression, with the testing data set plotted as black points. As shown above, the adaptive variance in the parameterization of the residuals distribution appears to capture the spread of the data on more local levels. One standard deviation captures more points than the basic model with constant variance. 
+
+Using the $\sigma^2$ estimates at every point, I computed the likelihood values for the constant variance case vs. the bayesian-estimated variance values. The results do suggest that the Bayesian Regression case captured more of the variance of the observations in the test set than the SLR model, indicating that Bayesian linear regression can indeed prove superior in many cases. In this case, though, the likelihood differences are fairly negligible. 
+
+```{r, show=FALSE}
+  sum(pnorm(csc_test_unscaled$MN_EARN_WNE_P10, mean = y_hat, sd=var_estimates))
+  sum(pnorm(csc_test_unscaled$MN_EARN_WNE_P10, mean = y_hat, sd=sqrt(summary(lm_unscaled)$sigma)))
+```
+
+Put another way, on average, each point in the BLR model was considered about 5\% more probable than the SLR model.
+
+## Multiple Regressors 
+```{r}
+  regressors <- csc_2012[, .(FAMINC, C150_4, TUITIONFEE_IN, AVGFACSAL, DEBT_MDN)]
+  X <- cbind(rep(1, nrow(csc_2012)), as.matrix(regressors))
+    # plot(bm2)
+  # plot(csc_2012_test[, .(TUITIONFEE_IN, MN_EARN_WNE_P10)])
+  # abline(a = beta[1], b=beta[2], col="red")
+  # abline(model$coefficients[1], model$coefficients[2], col="blue")
+
+  lm2 <- lm(MN_EARN_WNE_P10 ~ FAMINC + C150_4 + TUITIONFEE_IN + AVGFACSAL + DEBT_MDN, data = csc_train_unscaled)
+  bm2 <- MCMCpack::MCMCregress(MN_EARN_WNE_P10 ~ FAMINC + C150_4 + TUITIONFEE_IN + AVGFACSAL + DEBT_MDN, data = csc_train_unscaled)
+```
+
+```{r}
+  stats::confint(lm2)
+  summary(bm2)[[2]][, c(1, 5)]
+```
+
+```{r}
+summary(bm2)
+```
+
+
+```{r}
+  lm_unscaled <- lm(MN_EARN_WNE_P10~TUITIONFEE_IN, csc_train_unscaled)
+  n <- length(lm_unscaled$residuals)
+  y <- lm_unscaled$fitted.values
+  X <- matrix(c(rep(1, nrow(csc_train_unscaled)), csc_train_unscaled$TUITIONFEE_IN), ncol = 2)
+  
+  ## Start with precision matrix prior
+  tau <- 2500
+  V_0_i <- solve(tau^2 * diag(2))# (1/nrow(X) * (t(X) %*% X)) * 100 #1/nrow(X) * (t(X) %*% X) 
+  w_0 <- c(3.0e+04, 0.5)#rep(0, ncol(X))
+  
+  ## Estimate variance of prior parameters using eq. given in 7.58
+  sigma_sq <- var(csc_train_unscaled$TUITIONFEE_IN)
+  V_n <- (sigma_sq)*tau * solve(sigma_sq * V_0_i + t(X) %*% X)
+  #V_n <- solve(V_0_i + (1 / sigma_sq) * (t(X) %*% X)) 
+  sigma_w <- # matrix(c(0.5, -0.75, 0.25, 0.04777238), ncol=2)
+  y <- X %*% lm_unscaled$coefficients
+  w_n <- (V_n %*% V_0_i %*% w_0) + (1/(sigma_sq*tau)) * (V_n %*% t(X) %*% y)
+  
+  ## Get new observations
+  X_hat <- as.matrix(cbind(rep(1, nrow(csc_train_unscaled)), csc_train_unscaled[, .(TUITIONFEE_IN)]))
+  sigma_n <- sigma_sq + X_hat %*% V_n %*% t(X_hat) # var(X[,2]) + X_hat %*% V_n %*% t(X_hat)
+  var_estimates <- sqrt(diag(sigma_n)) # diag(sigma_n)
+```
+
+<!-- Note that I'm returning the log-density for the next step (MCMC ) -->
+<!-- ```{r} -->
+<!-- # posterior <- function(x) { -->
+<!-- #   covariance <- sigma_sq * solve(lambda_n) -->
+<!-- #   res <- mvtnorm::pmvnorm(x[1:2], mean = as.vector(mu_n), sigma=covariance) * invgamma::pinvgamma(x[3], a_n, b_n) -->
+<!-- #   return(res) -->
+<!-- # } -->
+<!-- ``` -->
+
+<!-- Because I used conjugate prior, the analytical solution exists. I decided to plot the posterior to get an idea on what the ideal parameter settings would be (and what the entire surface looks like):  -->
+
+
+<!-- ```{r} -->
+<!--   # P (beta | sigma^2, y, X) -->
+<!--   lhs <- function(x) { mvtnorm::pmvnorm(x, mean = as.vector(mu_n), sigma=covariance) } -->
+<!--   curve(lhs, x=lhs, from = x_min, to = x_max) -->
+<!-- ``` -->
+
+
+
+<!-- ```{r} -->
+<!--   require(akima) ; require(rgl) -->
+
+<!--   y_min <- invgamma::qinvgamma(p = 0.0001, shape = a_n, rate = b_n) -->
+<!--   y_max <- invgamma::qinvgamma(p = 0.9999, shape = a_n, rate = b_n) -->
+<!--   res <- mvtnorm::dmvnorm(x, mean = as.vector(mu_n), sigma=covariance) * invgamma::dinvgamma(x, a_n, cb_n) -->
+
+
+
+<!--   par(mar=c(5.5, 2.5, 2.5, 2.5)) -->
+<!--   curve(sigma_sq_func, y_min, y_max, main="P(sigma^2 | data)", xlab="Marginal posterior of residual variance") -->
+
+<!--   x_vals <- seq(x_min, x_max, abs(x_max - x_min)/100) -->
+<!--   y_vals <- seq(y_min, y_max, abs(y_max - y_min)/100) -->
+<!--   z_vals <- mapply(function(x, y) posterior(c(x, y)), x_vals, y_vals) -->
+<!--   # rgl::inter -->
+<!-- ``` -->
+
+
+
+<!-- # ```{r} -->
+<!-- # metRology::qt.scaled(10, df = v, mean = mu, sd = 1/lambda) -->
+<!-- #  -->
+<!-- #  -->
+<!-- #  -->
+<!-- # what_t <- function(x) { metRology::dt.scaled(x, df = v, mean = mu, sd = 1/lambda) } -->
+<!-- # curve(what_t, from = beta_start, to = beta_end) -->
+<!-- #  -->
+<!-- #  -->
+<!-- #  -->
+<!-- # t_dist(beta, rep(n - 1, length(beta)), b_n/a_n %*% solve(lambda_n), a_n) -->
+<!-- # ``` -->
+
+
+```{r}
+  x <- 1
+  posterior <- function(x) {
+    covariance <- sigma_sq * solve(lambda_n)
+    res <- mvtnorm::dmvnorm(x, mean = as.vector(mu_n), sigma=covariance) * invgamma::pinvgamma(x, a_n, b_n)
+    return(log(res))
+  }
+  
+
+  # adaptMCMC::MCMC(posterior, n = 100, init = c(0, 0.01), sigma_sq * solve(lambda_n))
+  # MASS::mvrnorm()(x, mean = mu_n, sd = sigma_sq * lambda_n) 
+```
+
+
+
+
+<!-- So the next step is to set these parameters appropriately for the given domain. According to Murphy, setting $ -->
+
+<!-- But how this relates back to reality is layered with complexity. But fundamentally, the goal as I understand Bayesian inference is to predict -->
+
+<!-- $$ P(\beta, \sigma^2 \mid y, X) \propto  P(y \mid X, \beta, \sigma^2) P(\beta \mid \sigma^2) P(\sigma^2) $$ -->
+
+
+
+
+
+
+
+
+<!-- # ```{r} -->
+<!-- # csc_2014 <- data.table::data.table(read.csv(file = "~/Downloads/CollegeScorecard_Raw_Data/MERGED2014_15_PP.csv")) -->
+<!-- # csc_2011 <- data.table::data.table(read.csv(file = "~/Downloads/CollegeScorecard_Raw_Data/MERGED2011_12_PP.csv")) -->
+<!-- # ``` -->
+
+<!-- ### Predict post graduate income by college based features such as family income, graduation rates, ethnicity proportions, acceptance rates, population size, debt levels, and tuition levels (regression problem). What set of features provide the best prediction accuracy? -->
+
+<!-- To begin, I scanned the dat set for the feaures that I wanted to build the model out of.  -->
+<!-- ```{r} -->
+<!--   plot(csc_2012[, .(TUITIONFEE_IN, MN_EARN_WNE_P10)]) -->
+
+
+
+<!-- ## function to compute the bayesian analog of the lmfit -->
+<!-- ## using non-informative priors and Monte Carlo scheme -->
+<!-- ## based on N samples -->
+
+<!-- bayesfit<-function(lmfit,N){ -->
+<!--     QR<-lmfit$qr -->
+<!--     df.residual<-lmfit$df.residual -->
+<!--     R<-qr.R(QR) ## R component -->
+<!--     coef<-lmfit$coef -->
+<!--     Vb<-chol2inv(R) ## variance(unscaled) -->
+<!--     s2<-(t(lmfit$residuals)%*%lmfit$residuals) -->
+<!--     s2<-s2[1,1]/df.residual -->
+
+<!--     ## now to sample residual variance -->
+<!--     sigma<-df.residual*s2/rchisq(N,df.residual) -->
+<!--     coef.sim<-sapply(sigma,function(x) MASS::mvrnorm(1,coef,Vb*x)) -->
+<!--     ret<-data.frame(t(coef.sim)) -->
+<!--     names(ret)<-names(lmfit$coef) -->
+<!--     ret$sigma<-sqrt(sigma) -->
+<!--     ret -->
+<!-- } -->
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!--   Bayes.sum<-function(x) -->
+<!--     { -->
+<!--         c("mean"=mean(x), -->
+<!--           "se"=sd(x), -->
+<!--           "t"=mean(x)/sd(x), -->
+<!--           "median"=median(x), -->
+<!--           "CrI"=quantile(x,prob=0.025), -->
+<!--           "CrI"=quantile(x,prob=0.975) -->
+<!--           ) -->
+<!--     } -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!--   ## Annette Dobson (1990) "An Introduction to Generalized Linear Models". -->
+<!--   ## Page 9: Plant Weight Data. -->
+<!--   ctl <- c(4.17,5.58,5.18,6.11,4.50,4.61,5.17,4.53,5.33,5.14) -->
+<!--   trt <- c(4.81,4.17,4.41,3.59,5.87,3.83,6.03,4.89,4.32,4.69) -->
+<!--   group <- gl(2, 10, 20, labels = c("Ctl","Trt")) -->
+<!--   weight <- c(ctl, trt) -->
+<!--   lmfit <- lm(weight ~ group) -->
+
+<!--   bf <- bayesfit(lmfit, 10000) -->
+<!--   t(apply(bf,2,Bayes.sum)) -->
+<!-- ``` -->
+
+
+
+<!-- ```{r} -->
+<!--   ## Bayesian Linear Regression  -->
+<!--   bf_model <- bayesfit(model, 10000) -->
+<!--   plot(csc_2012[, .(TUITIONFEE_IN, MN_EARN_WNE_P10)], pch=20) -->
+<!--   abline(model$coefficients[1], model$coefficients[2], col="red") -->
+<!--   model_sd <- summary(model)$sigma -->
+<!--   col_sd <- c("blue", "cadetblue", "turquoise3") -->
+<!--   for (sd_i in 1:3){ -->
+<!--     abline(model$coefficients[1]+sd_i*model_sd, model$coefficients[2], col=col_sd[sd_i], lty=2) -->
+<!--     abline(model$coefficients[1]-sd_i*model_sd, model$coefficients[2], col=col_sd[sd_i], lty=2) -->
+<!--   } -->
+
+<!-- ``` -->
+
+
+
+
+
+<!-- ## Family Income  -->
+<!-- There are several variables for qunatifying the 'family income' related to students at institutions. There are statistics related ot both independent vs dependent students, and generally the incomes are not reported themselves but rather the proportion of students that belong to certain income level categories (family income < 30k, between [48, 75], between [75, 110], and 110+, respectively) -->
+
+<!-- I will first examine the post graduate income (y) for students that did graduate, looking only at their median family income.  -->
+
+<!-- ```{r LR} -->
+<!--   find <- grep(pattern = "Wright*", unique(csc_2014$INSTNM)) -->
+<!--   csc_2014[INSTNM == "Wright State University-Main Campus", .(DEP_INC_AVG)] # 1663 -->
+<!--   csc_2014[INSTNM == "University of Dayton", .(DEP_INC_AVG)] -->
+<!--   csc_2014[INSTNM == "Cedarville University", .(DEP_INC_AVG)] -->
+
+<!--   income14 <- csc_2014[, .(DEP_INC_AVG = as.numeric(as.character(what$DEP_INC_AVG))), by=INSTNM] -->
+<!--   income11 <- csc_2011[, .(MN_EARN_WNE_P6, MN_EARN_WNE_P10, DEP_INC_AVG, IND_INC_AVG), by=INSTNM] -->
+
+<!--   income11[INSTNM == "University of Dayton"] -->
+<!--   income11[INSTNM == "Wright State University-Main Campus"] -->
+
+
+<!-- # INSTNM -->
+<!-- ``` -->
+
+
+<!-- ```{r} -->
+
+<!--   income11$DEP_INC_AVG <- as.numeric(as.character(income11$DEP_INC_AVG)) -->
+<!--   income11$MN_EARN_WNE_P6 <- as.numeric(as.character(income11$MN_EARN_WNE_P6)) -->
+<!--   income11 <- na.omit(income11) -->
+<!--   model <- lm(MN_EARN_WNE_P6~DEP_INC_AVG, income11) -->
+
+<!--   plot(income11[, .(DEP_INC_AVG, MN_EARN_WNE_P6)], pch=20) -->
+<!--   abline(coef = model$coefficients, col="red") -->
+<!--   points(income11[INSTNM=="Wright State University-Main Campus", .(DEP_INC_AVG, MN_EARN_WNE_P6)], pch=20, col="green", cex=2) -->
+<!--   points(income11[INSTNM=="University of Dayton", .(DEP_INC_AVG, MN_EARN_WNE_P6)], pch=20, col="red", cex=2) -->
+<!--   points(income11[INSTNM=="Cedarville University", .(DEP_INC_AVG, MN_EARN_WNE_P6)], pch=20, col="yellow", cex=2) -->
+
+<!--   tuition_income <- csc_2011[, .(MN_EARN_WNE_P6, TUITIONFEE_IN), by=INSTNM] -->
+<!--   tuition_income$MN_EARN_WNE_P6 <- as.numeric(as.character(tuition_income$MN_EARN_WNE_P6)) -->
+<!--   tuition_income$TUITIONFEE_IN <- as.numeric(as.character(tuition_income$TUITIONFEE_IN)) -->
+<!--   tuition_income <- na.omit(tuition_income) -->
+
+```{r}
+  #model <- lm(MN_EARN_WNE_P6~TUITIONFEE_IN, tuition_income)
+csc_2012 <- data.table::data.table(
+    read.csv(file = "~/Downloads/CollegeScorecard_Raw_Data/MERGED2012_13_PP.csv"))
+
+  tuition_income <- csc_2012[, .(TUITIONFEE_IN, MN_EARN_WNE_P10), by=INSTNM]
+  tuition_income$TUITIONFEE_IN <- as.numeric(as.character(tuition_income$TUITIONFEE_IN))
+  tuition_income$MN_EARN_WNE_P10 <- as.numeric(as.character(tuition_income$MN_EARN_WNE_P10))
+  tuition_income <- na.omit(tuition_income)
+  
+  base_model <- lm(MN_EARN_WNE_P10~TUITIONFEE_IN, tuition_income)
+  plot(tuition_income[, .(TUITIONFEE_IN, MN_EARN_WNE_P10)], pch=20, xlab="Average Tuition Cost", 
+       ylab="Mean Earning (10 years after enrollment)", main="Tuition vs. Earnings", 
+       sub="(University Averages)")
+  abline(coef = base_model$coefficients, col="red")
+
+  points(tuition_income[INSTNM=="Wright State University-Main Campus", .(TUITIONFEE_IN, MN_EARN_WNE_P10)], pch=20, col="green", cex=2)
+  points(tuition_income[INSTNM=="University of Dayton", .(TUITIONFEE_IN, MN_EARN_WNE_P10)], pch=20, col="red", cex=2)
+  points(tuition_income[INSTNM=="Cedarville University", .(TUITIONFEE_IN, MN_EARN_WNE_P10)], pch=20, col="yellow", cex=2)
+  points(tuition_income[INSTNM=="Stanford University", .(TUITIONFEE_IN, MN_EARN_WNE_P10)], pch=20, col="indianred1", cex=2)
+  points(tuition_income[INSTNM=="Sinclair Community College", .(TUITIONFEE_IN, MN_EARN_WNE_P10)], pch=20, col="pink", cex=2)
+  points(tuition_income[INSTNM=="Ohio State University-Main Campus", .(TUITIONFEE_IN, MN_EARN_WNE_P10)], pch=20, col="darkred", cex=2)
+  points(tuition_income[INSTNM=="Miami University-Oxford", .(TUITIONFEE_IN, MN_EARN_WNE_P10)], pch=20, col="firebrick2", cex=2)
+  points(tuition_income[INSTNM=="Massachusetts Institute of Technology", .(TUITIONFEE_IN, MN_EARN_WNE_P10)], pch=20, col="blue", cex=2)
+  points(tuition_income[INSTNM=="University of Notre Dame", .(TUITIONFEE_IN, MN_EARN_WNE_P10)], pch=20, col="yellowgreen", cex=2)
+  points(tuition_income[INSTNM=="Harvard University", .(TUITIONFEE_IN, MN_EARN_WNE_P10)], pch=20, col="tomato1", cex=2)
+    points(tuition_income[INSTNM=="University of Missouri-Columbia", .(TUITIONFEE_IN, MN_EARN_WNE_P10)], pch=20, col="orange", cex=2)
+  
+  
+  
+```
+
+  
+
+
+
+
+
+<!--   nursing <- grep(pattern = "Nurs*", csc_2011$INSTNM) -->
+<!--   pharmacy <- grep(pattern = "Pharm*", csc_2011$INSTNM) -->
+<!--   points(tuition_income[nursing, .(TUITIONFEE_IN, MN_EARN_WNE_P6)], pch=21, col="pink", cex=2) -->
+<!--   points(tuition_income[pharmacy, .(TUITIONFEE_IN, MN_EARN_WNE_P6)], pch=21, col="green", cex=2) # ```{r}
+#   t_dist <- function(x, v, mu, lambda) {
+#     gamma(v + 1 / 2)/gamma(v/2) * (lambda / (pi * v))^(1/2) * (1 + (lambda*(x - mu)^2)/v)^((-v+1)/2)
+#   }
+# ```-->
+
+
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- ## Annette Dobson (1990) "An Introduction to Generalized Linear Models". -->
+<!-- ## Page 9: Plant Weight Data. -->
+<!-- ctl <- c(4.17,5.58,5.18,6.11,4.50,4.61,5.17,4.53,5.33,5.14) -->
+<!-- trt <- c(4.81,4.17,4.41,3.59,5.87,3.83,6.03,4.89,4.32,4.69) -->
+<!-- group <- gl(2, 10, 20, labels = c("Ctl","Trt")) -->
+<!-- weight <- c(ctl, trt) -->
+<!-- lmfit <- lm(weight ~ group) -->
+<!-- ``` -->
+
+
+
+
+
+
